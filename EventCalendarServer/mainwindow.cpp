@@ -14,9 +14,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->setupUi(this);
 
     _udpSocket = new QUdpSocket(this);
+    _syncSocket = new QUdpSocket(this);
     _multicastAddress = QHostAddress("239.255.0.1");
-    _multicastPort = 45454;
+    _multicastPort1 = 45454;
+    _multicastPort2 = 45455;
     _networkEnabled = false;
+
+    _syncSocket->bind(QHostAddress::AnyIPv4, _multicastPort2, QUdpSocket::ShareAddress);
+    _syncSocket->joinMulticastGroup(_multicastAddress);
+
+    connect(_syncSocket, &QUdpSocket::readyRead, this, &MainWindow::processSyncRequest);
 
     ui->statusLabel->setFixedSize(20, 20);
     ui->statusLabel->setStyleSheet(_baseStyle + "background-color: gray;");
@@ -24,6 +31,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 }
 
 MainWindow::~MainWindow() {
+    _syncSocket->leaveMulticastGroup(_multicastAddress);
+
     delete ui;
 }
 
@@ -169,11 +178,26 @@ void MainWindow::sendData(const QDate &date, const QString &text) {
 
     QByteArray data = QJsonDocument(doc).toJson(QJsonDocument::Compact);
 
-    qint64 bytesSent = _udpSocket->writeDatagram(data, _multicastAddress, _multicastPort);
-
-    if (!QJsonDocument(doc).isNull()) {
-        qDebug().noquote() << "Отправлено: " << QJsonDocument(doc).toJson(QJsonDocument::Indented);
-    }
+    qint64 bytesSent = _udpSocket->writeDatagram(data, _multicastAddress, _multicastPort1);
 
     updateStatusIndicator(bytesSent != -1);
+}
+
+void MainWindow::processSyncRequest() {
+    while (_syncSocket->hasPendingDatagrams()) {
+        QByteArray datagram;
+        datagram.resize(_syncSocket->pendingDatagramSize());
+        _syncSocket->readDatagram(datagram.data(), datagram.size());
+
+        QString request(datagram);
+
+        if (request == "SYNC_REQUEST" && _networkEnabled) {
+            for (auto it = _storage.begin(); it != _storage.end(); ++it) {
+                QStringList events = it.value().values();
+                for (const QString &event : events) {
+                    sendData(it.key(), event);
+                }
+            }
+        }
+    }
 }
