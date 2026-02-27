@@ -1,145 +1,172 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
-
 #include <QMessageBox>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QDebug>
+#include <QFileDialog>
 #include <QTimer>
-#include <QDate>
-
-QString _baseStyle = "border-radius: 10px; border: 1px solid black;";
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow) {
     ui->setupUi(this);
 
-    _udpSocket = new QUdpSocket(this);
-    _syncSocket = new QUdpSocket(this);
-    _multicastAddress = QHostAddress("239.255.0.1");
-    _multicastPort1 = 45454;
-    _multicastPort2 = 45455;
+    _storage = new EventStorage(this);
+    _network = new Network(this);
     _networkEnabled = false;
 
-    _syncSocket->bind(QHostAddress::AnyIPv4, _multicastPort2, QUdpSocket::ShareAddress);
-    _syncSocket->joinMulticastGroup(_multicastAddress);
-
-    connect(_syncSocket, &QUdpSocket::readyRead, this, &MainWindow::processSyncRequest);
-
     ui->statusLabel->setFixedSize(20, 20);
-    ui->statusLabel->setStyleSheet(_baseStyle + "background-color: gray;");
+    ui->statusLabel->setStyleSheet("border-radius: 10px; border: 1px solid black; background-color: gray;");
     ui->treeWidget->setHeaderLabel("Хронология событий");
+
+    connect(_network, &Network::statusUpdate, this, &MainWindow::statusUpdate);
+    connect(_network, &Network::syncRequestReceived, this, &MainWindow::onSyncRequestReceived);
 }
 
 MainWindow::~MainWindow() {
-    _syncSocket->leaveMulticastGroup(_multicastAddress);
-
     delete ui;
 }
 
-void MainWindow::on_pushButton_Add_clicked()
-{
-    addEvent();
-}
-
-void MainWindow::on_pushButton_Remove_clicked()
-{
-    removeEvent();
-}
-
-void MainWindow::on_pushButton_Find_clicked()
-{
-    findEvents();
-}
-
-void MainWindow::on_pushButton_ClearSearch_clicked()
-{
-    updateTree();
-}
-
-void MainWindow::on_pushButton_Apply_clicked()
-{
-    if (ui->checkBox->isChecked()) {
-        _networkEnabled = true;
-    } else {
-        _networkEnabled = false;
-    }
-}
-
-void MainWindow::addEvent() {
+void MainWindow::on_pushButton_Add_clicked() {
     QString text = ui->lineEdit->text();
-
     if (!text.isEmpty()) {
         QDate date = ui->dateEdit->date();
-        _storage[date].insert(text);
-
+        _storage->addEvent(date, text);
         updateTree();
 
         if (_networkEnabled) {
-            sendData(date, text);
+            _network->sendData(date, text);
         }
         ui->lineEdit->clear();
     }
 }
 
-void MainWindow::removeEvent() {
+void MainWindow::on_pushButton_Remove_clicked() {
     QTreeWidgetItem *currentItem = ui->treeWidget->currentItem();
-
     if (!currentItem) return;
 
-    if (currentItem->parent()) {
-        QString eventText = currentItem->text(0);
-        QString dateText = currentItem->parent()->text(0);
-        QDate date = QDate::fromString(dateText, "yyyy-MM-dd");
+    QString dateText = currentItem->parent() ? currentItem->parent()->text(0) : currentItem->text(0);
+    QString eventText = currentItem->parent() ? currentItem->text(0) : QString();
 
-        if (_storage.contains(date)) {
-            QMessageBox::StandardButton answer = QMessageBox::question(this, "Confirm remove",
-                    "Do you really want to remove event: " + eventText + " ?", QMessageBox::Yes | QMessageBox::No);
+    QString message = eventText.isEmpty()
+        ? "Do you really want to remove all events on date: " + dateText + " ?"
+        : "Do you really want to remove event: " + eventText + " ?";
 
-            if (answer == QMessageBox::Yes) {
-                _storage[date].remove(eventText);
-                if (_storage[date].isEmpty()) {
-                    _storage.remove(date);
-                }
-            }
-        }
+    QMessageBox::StandardButton answer = QMessageBox::question(this, "Confirm remove", message, QMessageBox::Yes | QMessageBox::No);
+
+    if (answer == QMessageBox::Yes) {
+        _storage->removeItem(dateText, eventText);
+        updateTree();
     }
-    else {
-        QString dateText = currentItem->text(0);
-        QMessageBox::StandardButton answer = QMessageBox::question(this, "Confirm remove",
-                "Do you really want to remove all events on date: " + dateText + " ?", QMessageBox::Yes | QMessageBox::No);
-        if (answer == QMessageBox::Yes) {
-            QDate date = QDate::fromString(dateText, "yyyy-MM-dd");
-            _storage.remove(date);
-        }
-    }
+}
 
+void MainWindow::on_pushButton_Find_clicked() {
+    ui->treeWidget->clear();
+    QStringList events = _storage->findEvents(ui->dateEdit->date());
+
+    for (const QString &event : events) {
+        QTreeWidgetItem *eventItem = new QTreeWidgetItem(ui->treeWidget);
+        eventItem->setText(0, event);
+    }
+}
+
+void MainWindow::on_pushButton_ClearSearch_clicked() {
     updateTree();
 }
 
-void MainWindow::findEvents() {
-    ui->treeWidget->clear();
+void MainWindow::on_pushButton_Apply_clicked() {
+    _networkEnabled = ui->checkBox->isChecked();
+    _network->setNetworkEnabled(_networkEnabled);
+}
 
-    QDate date = ui->dateEdit->date();
+void MainWindow::on_pushButton_Export_clicked() {
+    QString filename = QFileDialog::getSaveFileName(this, "Сохранить файл", QDir::homePath() + "/export.txt", "Текстовые файлы (*.txt)");
 
-    if (date.isValid()) {
-        if (_storage[date].size() != 0) {
-            QStringList eventsList = _storage[date].values();
-            eventsList.sort();
+    if (filename.isEmpty()) {
+        return;
+    }
 
-            for (const QString &event : eventsList) {
-                QTreeWidgetItem *eventItem = new QTreeWidgetItem(ui->treeWidget);
-                eventItem->setText(0, event);
-            }
-        } else {
-            _storage.remove(date);
+    QFile file(filename);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "Ошибка", "Не удалось открыть файл для записи");
+        return;
+    }
+
+    QTextStream stream(&file);
+
+    QMap<QDate, QSet<QString>> export_storage = _storage->getAllEvents();
+
+    for (auto it = export_storage.begin(); it != export_storage.end(); ++it) {
+        const auto &date = it.key();
+        const auto &events = it.value();
+
+        QStringList sortedEvents = events.values();
+        std::sort(sortedEvents.begin(), sortedEvents.end());
+
+        for (const QString &event : sortedEvents) {
+            stream << date.toString("yyyy-MM-dd") << " | " << event << "\n";
         }
+    }
+
+    file.close();
+
+    QMessageBox::information(this, "Успех", "Файл успешно сохранен");
+}
+
+void MainWindow::on_pushButton_Import_clicked() {
+    QString filename = QFileDialog::getOpenFileName(this, "Открыть файл", QDir::homePath(), "Текстовые файлы (*.txt)");
+
+    if (filename.isEmpty()) {
+        return;
+    }
+
+    QFile file(filename);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "Ошибка", "Не удалось открыть файл");
+        return;
+    }
+
+    QTextStream stream(&file);
+
+    int addedCount = 0;
+    int lineNum = 0;
+
+    while (!stream.atEnd()) {
+        QString line = stream.readLine();
+        lineNum++;
+
+        QString trimmed_line = line.trimmed();
+        if (trimmed_line.isEmpty()) {
+            continue;
+        }
+
+        QStringList parts = trimmed_line.split(" | ");
+        if (parts.size() != 2) {
+            continue;
+        }
+
+        QString dateString = parts.at(0).trimmed();
+        QString eventText = parts.at(1).trimmed();
+
+        QDate date = QDate::fromString(dateString, "yyyy-MM-dd");
+
+        if (date.isValid() && !eventText.isEmpty()) {
+            _storage->addEvent(date, eventText);
+            addedCount++;
+        }
+    }
+
+    file.close();
+
+    if (addedCount > 0) {
+        updateTree();
+        QMessageBox::information(this, "Успех", "События успешно импортированы");
+    } else {
+        QMessageBox::warning(this, "Предупреждение", "Не найдено событий для импорта");
     }
 }
 
 void MainWindow::updateTree() {
     ui->treeWidget->clear();
+    QMap<QDate, QSet<QString>> allEvents = _storage->getAllEvents();
 
-    for (auto it = _storage.begin(); it != _storage.end(); ++it) {
+    for (auto it = allEvents.begin(); it != allEvents.end(); ++it) {
         QTreeWidgetItem *dateItem = new QTreeWidgetItem(ui->treeWidget);
         dateItem->setText(0, it.key().toString("yyyy-MM-dd"));
 
@@ -154,50 +181,21 @@ void MainWindow::updateTree() {
     }
 }
 
-void MainWindow::resetStatus() {
-    ui->statusLabel->setStyleSheet(_baseStyle + "background-color: gray;");
-}
-
-void MainWindow::updateStatusIndicator(bool success) {
-    if (success) {
-        ui->statusLabel->setStyleSheet(_baseStyle + "background-color: green;");
-    } else {
-        ui->statusLabel->setStyleSheet(_baseStyle + "background-color: red;");
-    }
-
-    QTimer::singleShot(1000, this, &MainWindow::resetStatus);
-}
-
-void MainWindow::sendData(const QDate &date, const QString &text) {
-    QJsonObject doc;
-    doc["type"] = "event_added";
-    doc["date"] = date.toString("yyyy-MM-dd");
-    doc["event"] = text;
-    doc["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
-    doc["sender"] = QSysInfo::machineHostName();
-
-    QByteArray data = QJsonDocument(doc).toJson(QJsonDocument::Compact);
-
-    qint64 bytesSent = _udpSocket->writeDatagram(data, _multicastAddress, _multicastPort1);
-
-    updateStatusIndicator(bytesSent != -1);
-}
-
-void MainWindow::processSyncRequest() {
-    while (_syncSocket->hasPendingDatagrams()) {
-        QByteArray datagram;
-        datagram.resize(_syncSocket->pendingDatagramSize());
-        _syncSocket->readDatagram(datagram.data(), datagram.size());
-
-        QString request(datagram);
-
-        if (request == "SYNC_REQUEST" && _networkEnabled) {
-            for (auto it = _storage.begin(); it != _storage.end(); ++it) {
-                QStringList events = it.value().values();
-                for (const QString &event : events) {
-                    sendData(it.key(), event);
-                }
+void MainWindow::onSyncRequestReceived() {
+    if (_networkEnabled) {
+        QMap<QDate, QSet<QString>> allEvents = _storage->getAllEvents();
+        for (auto it = allEvents.begin(); it != allEvents.end(); ++it) {
+            for (const QString &event : it.value()) {
+                _network->sendData(it.key(), event);
             }
         }
     }
+}
+
+void MainWindow::statusUpdate(bool success) {
+    QString baseStyle = "border-radius: 10px; border: 1px solid black;";
+    ui->statusLabel->setStyleSheet(baseStyle + (success ? "background-color: green;" : "background-color: red;"));
+    QTimer::singleShot(1000, [this, baseStyle]() {
+        ui->statusLabel->setStyleSheet(baseStyle + "background-color: gray;");
+    });
 }

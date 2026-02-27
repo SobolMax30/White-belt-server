@@ -2,10 +2,9 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QUdpSocket>
 #include <QDate>
-#include <QMap>
-#include <QSet>
+#include "eventstorage.h"
+#include "network.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -24,23 +23,17 @@ private slots:
     void on_pushButton_Find_clicked();
     void on_pushButton_ClearSearch_clicked();
     void on_pushButton_Apply_clicked();
-    void processSyncRequest();
-    void addEvent();
-    void removeEvent();
+    void on_pushButton_Export_clicked();   
+    void on_pushButton_Import_clicked();
     void updateTree();
-    void findEvents();
-    void resetStatus();
-    void updateStatusIndicator(bool success);
-    void sendData(const QDate &date, const QString &text);
+    void onSyncRequestReceived();
+    void statusUpdate(bool success);
 
 private:
     Ui::MainWindow *ui;
-    QMap<QDate, QSet<QString>> _storage;
-    QUdpSocket *_udpSocket;
-    QUdpSocket *_syncSocket;
-    QHostAddress _multicastAddress;
-    quint16 _multicastPort1;
-    quint16 _multicastPort2;
+    EventStorage *_storage;
+    Network *_network;
     bool _networkEnabled;
 };
+
 #endif // MAINWINDOW_H
