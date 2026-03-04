@@ -9,7 +9,7 @@ class PacketReceiver : public QObject {
     Q_OBJECT
 
 public:
-    PacketReceiver(QObject *parent = nullptr);
+    explicit PacketReceiver(QObject *parent = nullptr);
     ~PacketReceiver();
 
     void setEnabled(bool enabled);

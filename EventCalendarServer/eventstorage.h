@@ -11,7 +11,7 @@ class EventStorage : public QObject {
     Q_OBJECT
 
 public:
-    EventStorage(QObject *parent = nullptr);
+    explicit EventStorage(QObject *parent = nullptr);
 
     void addEvent(const QDate &date, const QString &event);
     void removeItem(const QString &dateText, const QString &eventText = QString());

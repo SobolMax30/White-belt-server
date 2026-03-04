@@ -1,4 +1,5 @@
 #include "packetsender.h"
+
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDateTime>
@@ -26,10 +27,13 @@ bool PacketSender::sendEventData(const QDate &date, const QString &text) {
     QByteArray data = QJsonDocument(doc).toJson(QJsonDocument::Compact);
     qint64 bytesSent = _udpSocket->writeDatagram(data, _multicastAddress, _multicastPort1);
 
-    bool success = (bytesSent != -1);
-    emit statusUpdate(success);
-
-    return success;
+    if (bytesSent != -1) {
+        emit statusUpdate(true);
+        return true;
+    } else {
+        emit statusUpdate(false);
+        return false;
+    }
 }
 
 void PacketSender::setEnabled(bool enabled) {

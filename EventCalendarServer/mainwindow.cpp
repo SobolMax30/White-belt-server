@@ -1,22 +1,28 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QTimer>
+#include <QDir>
+
+static const QString BASE_STYLE = "border-radius: 10px; border: 1px solid black;";
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow) {
     ui->setupUi(this);
 
     _storage = new EventStorage(this);
     _network = new Network(this);
+    _fileManager = new FileManager(this);
     _networkEnabled = false;
 
     ui->statusLabel->setFixedSize(20, 20);
-    ui->statusLabel->setStyleSheet("border-radius: 10px; border: 1px solid black; background-color: gray;");
+    ui->statusLabel->setStyleSheet(BASE_STYLE + "background-color: gray;");
     ui->treeWidget->setHeaderLabel("Хронология событий");
 
     connect(_network, &Network::statusUpdate, this, &MainWindow::statusUpdate);
     connect(_network, &Network::syncRequestReceived, this, &MainWindow::onSyncRequestReceived);
+    connect(_fileManager, &FileManager::error, this, &MainWindow::showErrorMessage);
 }
 
 MainWindow::~MainWindow() {
@@ -39,14 +45,27 @@ void MainWindow::on_pushButton_Add_clicked() {
 
 void MainWindow::on_pushButton_Remove_clicked() {
     QTreeWidgetItem *currentItem = ui->treeWidget->currentItem();
-    if (!currentItem) return;
+    if (currentItem == nullptr) {
+        return;
+    }
 
-    QString dateText = currentItem->parent() ? currentItem->parent()->text(0) : currentItem->text(0);
-    QString eventText = currentItem->parent() ? currentItem->text(0) : QString();
+    QString dateText;
+    QString eventText;
 
-    QString message = eventText.isEmpty()
-        ? "Do you really want to remove all events on date: " + dateText + " ?"
-        : "Do you really want to remove event: " + eventText + " ?";
+    if (currentItem->parent() != nullptr) {
+        dateText = currentItem->parent()->text(0);
+        eventText = currentItem->text(0);
+    } else {
+        dateText = currentItem->text(0);
+        eventText = QString();
+    }
+
+    QString message;
+    if (eventText.isEmpty()) {
+        message = "Do you really want to remove all events on date: " + dateText + " ?";
+    } else {
+        message = "Do you really want to remove event: " + eventText + " ?";
+    }
 
     QMessageBox::StandardButton answer = QMessageBox::question(this, "Confirm remove", message, QMessageBox::Yes | QMessageBox::No);
 
@@ -71,94 +90,47 @@ void MainWindow::on_pushButton_ClearSearch_clicked() {
 }
 
 void MainWindow::on_pushButton_Apply_clicked() {
-    _networkEnabled = ui->checkBox->isChecked();
+    if (ui->checkBox->isChecked()) {
+        _networkEnabled = true;
+    } else {
+        _networkEnabled = false;
+    }
     _network->setNetworkEnabled(_networkEnabled);
 }
 
 void MainWindow::on_pushButton_Export_clicked() {
-    QString filename = QFileDialog::getSaveFileName(this, "Сохранить файл", QDir::homePath() + "/export.txt", "Текстовые файлы (*.txt)");
+    QString filename = QFileDialog::getSaveFileName(this, "Сохранить файл",
+        QDir::homePath() + "/export.txt", "Текстовые файлы (*.txt)");
 
     if (filename.isEmpty()) {
         return;
     }
 
-    QFile file(filename);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "Ошибка", "Не удалось открыть файл для записи");
-        return;
+    bool result = _fileManager->exportToFile(filename, _storage);
+    if (result) {
+        QMessageBox::information(this, "Успех", "Файл успешно сохранен");
     }
-
-    QTextStream stream(&file);
-
-    QMap<QDate, QSet<QString>> export_storage = _storage->getAllEvents();
-
-    for (auto it = export_storage.begin(); it != export_storage.end(); ++it) {
-        const auto &date = it.key();
-        const auto &events = it.value();
-
-        QStringList sortedEvents = events.values();
-        std::sort(sortedEvents.begin(), sortedEvents.end());
-
-        for (const QString &event : sortedEvents) {
-            stream << date.toString("yyyy-MM-dd") << " | " << event << "\n";
-        }
-    }
-
-    file.close();
-
-    QMessageBox::information(this, "Успех", "Файл успешно сохранен");
 }
 
 void MainWindow::on_pushButton_Import_clicked() {
-    QString filename = QFileDialog::getOpenFileName(this, "Открыть файл", QDir::homePath(), "Текстовые файлы (*.txt)");
+    QString filename = QFileDialog::getOpenFileName(this, "Открыть файл",
+        QDir::homePath(), "Текстовые файлы (*.txt)");
 
     if (filename.isEmpty()) {
         return;
     }
 
-    QFile file(filename);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "Ошибка", "Не удалось открыть файл");
-        return;
-    }
-
-    QTextStream stream(&file);
-
     int addedCount = 0;
-    int lineNum = 0;
+    bool result = _fileManager->importFromFile(filename, _storage, addedCount);
 
-    while (!stream.atEnd()) {
-        QString line = stream.readLine();
-        lineNum++;
-
-        QString trimmed_line = line.trimmed();
-        if (trimmed_line.isEmpty()) {
-            continue;
+    if (result) {
+        if (addedCount > 0) {
+            updateTree();
+            QString message = "Импортировано " + QString::number(addedCount) + " событий";
+            QMessageBox::information(this, "Успех", message);
+        } else {
+            QMessageBox::warning(this, "Предупреждение", "Не найдено событий для импорта");
         }
-
-        QStringList parts = trimmed_line.split(" | ");
-        if (parts.size() != 2) {
-            continue;
-        }
-
-        QString dateString = parts.at(0).trimmed();
-        QString eventText = parts.at(1).trimmed();
-
-        QDate date = QDate::fromString(dateString, "yyyy-MM-dd");
-
-        if (date.isValid() && !eventText.isEmpty()) {
-            _storage->addEvent(date, eventText);
-            addedCount++;
-        }
-    }
-
-    file.close();
-
-    if (addedCount > 0) {
-        updateTree();
-        QMessageBox::information(this, "Успех", "События успешно импортированы");
-    } else {
-        QMessageBox::warning(this, "Предупреждение", "Не найдено событий для импорта");
     }
 }
 
@@ -193,9 +165,17 @@ void MainWindow::onSyncRequestReceived() {
 }
 
 void MainWindow::statusUpdate(bool success) {
-    QString baseStyle = "border-radius: 10px; border: 1px solid black;";
-    ui->statusLabel->setStyleSheet(baseStyle + (success ? "background-color: green;" : "background-color: red;"));
-    QTimer::singleShot(1000, [this, baseStyle]() {
-        ui->statusLabel->setStyleSheet(baseStyle + "background-color: gray;");
+    if (success) {
+        ui->statusLabel->setStyleSheet(BASE_STYLE + "background-color: green;");
+    } else {
+        ui->statusLabel->setStyleSheet(BASE_STYLE + "background-color: red;");
+    }
+
+    QTimer::singleShot(1000, [this, BASE_STYLE]() {
+        ui->statusLabel->setStyleSheet(BASE_STYLE + "background-color: gray;");
     });
+}
+
+void MainWindow::showErrorMessage(const QString &message) {
+    QMessageBox::warning(this, "Ошибка", message);
 }

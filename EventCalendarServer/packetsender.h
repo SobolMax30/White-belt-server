@@ -10,7 +10,7 @@ class PacketSender : public QObject {
     Q_OBJECT
 
 public:
-    PacketSender(QObject *parent = nullptr);
+    explicit PacketSender(QObject *parent = nullptr);
 
     bool sendEventData(const QDate &date, const QString &text);
     void setEnabled(bool enabled);

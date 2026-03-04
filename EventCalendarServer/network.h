@@ -1,16 +1,17 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
-#include <QObject>
-#include <QDate>
 #include "packetsender.h"
 #include "packetreceiver.h"
+
+#include <QObject>
+#include <QDate>
 
 class Network : public QObject {
     Q_OBJECT
 
 public:
-    Network(QObject *parent = nullptr);
+    explicit Network(QObject *parent = nullptr);
 
     void sendData(const QDate &date, const QString &text);
     void setNetworkEnabled(bool enabled);

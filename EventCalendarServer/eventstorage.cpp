@@ -3,7 +3,7 @@
 EventStorage::EventStorage(QObject *parent) : QObject(parent) {}
 
 void EventStorage::addEvent(const QDate &date, const QString &event) {
-    if (!event.isEmpty()) {
+    if (date.isValid() && !event.isEmpty()) {
         _storage[date].insert(event);
     }
 }
@@ -36,7 +36,13 @@ bool EventStorage::contains(const QDate &date) const {
 }
 
 bool EventStorage::containsEvent(const QDate &date, const QString &event) const {
-    return _storage.contains(date) && _storage[date].contains(event);
+    if (_storage.contains(date)) {
+        if (_storage[date].contains(event)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 QStringList EventStorage::findEvents(const QDate &date) const {

@@ -1,4 +1,5 @@
 #include "packetreceiver.h"
+
 #include <QDebug>
 
 PacketReceiver::PacketReceiver(QObject *parent) : QObject(parent) {
@@ -14,7 +15,9 @@ PacketReceiver::PacketReceiver(QObject *parent) : QObject(parent) {
 }
 
 PacketReceiver::~PacketReceiver() {
+    disconnect(_syncSocket, &QUdpSocket::readyRead, this, &PacketReceiver::processPendingDatagrams);
     _syncSocket->leaveMulticastGroup(_multicastAddress);
+    _syncSocket->close();
 }
 
 void PacketReceiver::processPendingDatagrams() {
@@ -35,5 +38,7 @@ void PacketReceiver::processPendingDatagrams() {
 }
 
 void PacketReceiver::setEnabled(bool enabled) {
-    _enabled = enabled;
+    if (_enabled != enabled) {
+        _enabled = enabled;
+    }
 }

@@ -6,6 +6,7 @@ CONFIG += c++17
 
 SOURCES += \
     eventstorage.cpp \
+    filemanager.cpp \
     main.cpp \
     mainwindow.cpp \
     network.cpp \
@@ -14,6 +15,7 @@ SOURCES += \
 
 HEADERS += \
     eventstorage.h \
+    filemanager.h \
     mainwindow.h \
     network.h \
     packetreceiver.h \
